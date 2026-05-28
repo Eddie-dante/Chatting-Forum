@@ -1,287 +1,401 @@
 import streamlit as st
-import sqlite3
+import pandas as pd
 from datetime import datetime
-from pathlib import Path
-import bcrypt
-import html
 import uuid
+import json
+import os
 
-# ============ CONFIGURATION ============
-st.set_page_config(page_title="ChatVerse Forum", page_icon="💬", layout="wide")
+# Page configuration
+st.set_page_config(
+    page_title="ChatVerse • Community Forum",
+    page_icon="💬",
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
 
-# Database setup
-DATA_DIR = Path("chatverse_data")
-DATA_DIR.mkdir(exist_ok=True)
-
-def init_db():
-    conn = sqlite3.connect(str(DATA_DIR / "chatverse.db"))
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    
-    # Users table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            username TEXT PRIMARY KEY,
-            name TEXT,
-            email TEXT,
-            password TEXT,
-            created_at TEXT
-        )
-    ''')
-    
-    # Messages table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS messages (
-            id TEXT PRIMARY KEY,
-            username TEXT,
-            text TEXT,
-            timestamp TEXT
-        )
-    ''')
-    
-    # Create admin if not exists
-    admin = cursor.execute("SELECT * FROM users WHERE username = 'admin'").fetchone()
-    if not admin:
-        hashed = bcrypt.hashpw('admin123'.encode(), bcrypt.gensalt()).decode()
-        cursor.execute(
-            "INSERT INTO users (username, name, email, password, created_at) VALUES (?, ?, ?, ?, ?)",
-            ('admin', 'Admin', 'admin@chatverse.com', hashed, datetime.now().isoformat())
-        )
-    
-    conn.commit()
-    conn.close()
-
-init_db()
-
-def get_db():
-    conn = sqlite3.connect(str(DATA_DIR / "chatverse.db"))
-    conn.row_factory = sqlite3.Row
-    return conn
-
-# ============ HELPER FUNCTIONS ============
-def hash_password(password):
-    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
-
-def verify_password(password, hashed):
-    try:
-        return bcrypt.checkpw(password.encode(), hashed.encode())
-    except:
-        return False
-
-def sanitize(text):
-    return html.escape(str(text)) if text else ""
-
-# ============ SESSION STATE ============
-if 'logged_in' not in st.session_state:
-    st.session_state.logged_in = False
-if 'username' not in st.session_state:
-    st.session_state.username = None
-if 'name' not in st.session_state:
-    st.session_state.name = None
-if 'page' not in st.session_state:
-    st.session_state.page = 'login'
-
-# ============ CSS ============
+# Custom CSS for better styling
 st.markdown("""
 <style>
-    .stApp { background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); }
-    .chat-box { 
-        background: rgba(30,41,59,0.8); 
-        border: 1px solid rgba(148,163,184,0.2); 
-        border-radius: 15px; 
-        padding: 20px; 
-        height: 450px; 
-        overflow-y: auto; 
+    /* Main container styling */
+    .stApp {
+        background: linear-gradient(145deg, #0f172a 0%, #1e293b 100%);
     }
-    .msg { 
-        background: rgba(51,65,85,0.6); 
-        border-radius: 12px; 
-        padding: 12px; 
-        margin: 8px 0; 
+    
+    /* Chat message styling */
+    .chat-message {
+        padding: 1rem;
+        border-radius: 1rem;
+        margin-bottom: 1rem;
+        display: flex;
+        animation: fadeIn 0.3s ease-in;
     }
-    .my { 
-        background: rgba(124,58,237,0.3); 
-        border-left: 3px solid #7c3aed; 
+    
+    @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: translateY(0); }
     }
-    .uname { color: #a78bfa; font-weight: bold; }
-    .time { color: #64748b; font-size: 0.8em; margin-left: 10px; }
-    .txt { color: #e2e8f0; margin-top: 5px; }
-    .stButton button { 
-        background: linear-gradient(135deg, #7c3aed, #6d28d9) !important; 
-        color: white !important; 
-        border: none !important; 
-        border-radius: 10px !important; 
-        font-weight: bold !important; 
+    
+    .chat-message.user {
+        background: linear-gradient(135deg, rgba(59, 130, 246, 0.2), rgba(96, 165, 250, 0.1));
+        border: 1px solid rgba(59, 130, 246, 0.3);
+        margin-left: 20%;
     }
-    .stButton button:hover {
-        transform: translateY(-2px) !important;
-        box-shadow: 0 5px 15px rgba(124,58,237,0.4) !important;
+    
+    .chat-message.bot {
+        background: rgba(255, 255, 255, 0.08);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        margin-right: 20%;
     }
-    .stTextInput input { 
-        background: rgba(51,65,85,0.6) !important; 
-        color: white !important; 
-        border-radius: 10px !important; 
-        border: 1px solid rgba(148,163,184,0.3) !important; 
+    
+    .chat-avatar {
+        width: 45px;
+        height: 45px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: bold;
+        font-size: 1.2rem;
+        margin-right: 1rem;
+        flex-shrink: 0;
     }
-    .auth-card {
-        background: rgba(30,41,59,0.9);
-        border: 1px solid rgba(148,163,184,0.2);
-        border-radius: 20px;
-        padding: 30px;
+    
+    .user-avatar {
+        background: linear-gradient(135deg, #3b82f6, #60a5fa);
+        box-shadow: 0 4px 10px rgba(59, 130, 246, 0.3);
+    }
+    
+    .other-avatar {
+        background: linear-gradient(135deg, #7c3aed, #a78bfa);
+        box-shadow: 0 4px 10px rgba(124, 58, 237, 0.3);
+    }
+    
+    .chat-content {
+        flex: 1;
+    }
+    
+    .chat-author {
+        font-weight: 600;
+        font-size: 0.9rem;
+        color: #cbd5e1;
+        margin-bottom: 0.3rem;
+    }
+    
+    .chat-time {
+        font-size: 0.7rem;
+        color: #64748b;
+        margin-left: 0.5rem;
+    }
+    
+    .chat-text {
+        color: #f1f5f9;
+        line-height: 1.5;
+        word-wrap: break-word;
+    }
+    
+    /* Sidebar styling */
+    .css-1d391kg {
+        background: rgba(15, 23, 42, 0.95);
+    }
+    
+    /* Input area styling */
+    .stTextInput > div > div > input {
+        background: rgba(255, 255, 255, 0.07);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        border-radius: 2rem;
+        color: white;
+        padding: 0.75rem 1.5rem;
+    }
+    
+    .stTextInput > div > div > input:focus {
+        border-color: #c084fc;
+        box-shadow: 0 0 10px rgba(192, 132, 252, 0.3);
+    }
+    
+    /* Button styling */
+    .stButton > button {
+        background: linear-gradient(135deg, #7c3aed, #a855f7);
+        border: none;
+        border-radius: 2rem;
+        color: white;
+        font-weight: 500;
+        transition: all 0.2s ease;
+    }
+    
+    .stButton > button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 18px rgba(124, 58, 237, 0.4);
+    }
+    
+    /* Header styling */
+    .header-container {
+        text-align: center;
+        padding: 1rem;
+        margin-bottom: 2rem;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    
+    .online-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        background: rgba(255, 255, 255, 0.08);
+        padding: 0.3rem 1rem;
+        border-radius: 2rem;
+        font-size: 0.8rem;
+    }
+    
+    .online-dot {
+        width: 8px;
+        height: 8px;
+        background: #10b981;
+        border-radius: 50%;
+        animation: pulse 1.5s infinite;
+    }
+    
+    @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
+    }
+    
+    /* Alert/info styling */
+    .stAlert {
+        background: rgba(124, 58, 237, 0.1);
+        border: 1px solid rgba(124, 58, 237, 0.3);
+        border-radius: 1rem;
+    }
+    
+    /* Responsive */
+    @media (max-width: 768px) {
+        .chat-message.user {
+            margin-left: 5%;
+        }
+        .chat-message.bot {
+            margin-right: 5%;
+        }
     }
 </style>
 """, unsafe_allow_html=True)
 
-# ============ PAGES ============
-def login_page():
-    st.markdown('<h1 style="text-align:center;color:#a78bfa;">🔐 ChatVerse Login</h1>', unsafe_allow_html=True)
+# Initialize session state
+def init_session_state():
+    """Initialize all session state variables"""
+    if 'messages' not in st.session_state:
+        # Load messages from file or create default
+        st.session_state.messages = load_messages()
     
-    _, c, _ = st.columns([1, 2, 1])
-    with c:
-        st.markdown('<div class="auth-card">', unsafe_allow_html=True)
-        
-        with st.form("login"):
-            username = st.text_input("👤 Username")
-            password = st.text_input("🔒 Password", type="password")
-            
-            b1, b2 = st.columns(2)
-            with b1:
-                login_btn = st.form_submit_button("🚀 Login", use_container_width=True)
-            with b2:
-                signup_btn = st.form_submit_button("📝 Sign Up", use_container_width=True)
-            
-            if login_btn:
-                if username and password:
-                    conn = get_db()
-                    user = conn.execute("SELECT * FROM users WHERE LOWER(username) = ?", 
-                                      (username.lower(),)).fetchone()
-                    conn.close()
-                    
-                    if user and verify_password(password, user['password']):
-                        st.session_state.logged_in = True
-                        st.session_state.username = user['username']
-                        st.session_state.name = user['name']
-                        st.success("✅ Login successful!")
-                        st.balloons()
-                        st.rerun()
-                    else:
-                        st.error("❌ Invalid username or password")
-            
-            if signup_btn:
-                st.session_state.page = 'signup'
-                st.rerun()
-        
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-        with st.expander("🔑 Default Login"):
-            st.info("Username: **admin**\nPassword: **admin123**")
+    if 'username' not in st.session_state:
+        st.session_state.username = "Guest_" + str(uuid.uuid4())[:6]
+    
+    if 'user_avatar_color' not in st.session_state:
+        st.session_state.user_avatar_color = "user-avatar"
 
-def signup_page():
-    st.markdown('<h1 style="text-align:center;color:#a78bfa;">✨ Create Account</h1>', unsafe_allow_html=True)
+def load_messages():
+    """Load messages from JSON file"""
+    try:
+        if os.path.exists("chat_messages.json"):
+            with open("chat_messages.json", "r", encoding="utf-8") as f:
+                messages = json.load(f)
+                return messages
+    except Exception as e:
+        print(f"Error loading messages: {e}")
     
-    _, c, _ = st.columns([1, 2, 1])
-    with c:
-        st.markdown('<div class="auth-card">', unsafe_allow_html=True)
-        
-        with st.form("signup"):
-            name = st.text_input("👤 Full Name")
-            email = st.text_input("📧 Email")
-            username = st.text_input("👤 Username")
-            p1 = st.text_input("🔒 Password", type="password")
-            p2 = st.text_input("🔒 Confirm Password", type="password")
+    # Default messages
+    return [
+        {
+            "id": "1",
+            "username": "Astra",
+            "text": "Welcome to ChatVerse! 🌟 This is a live community forum. Feel free to chat and connect!",
+            "timestamp": datetime.now().isoformat(),
+            "avatar": "A"
+        },
+        {
+            "id": "2",
+            "username": "Nebula",
+            "text": "Hey everyone! Love the vibe here. What's everyone up to? ✨",
+            "timestamp": datetime.now().isoformat(),
+            "avatar": "N"
+        }
+    ]
+
+def save_messages():
+    """Save messages to JSON file"""
+    try:
+        with open("chat_messages.json", "w", encoding="utf-8") as f:
+            json.dump(st.session_state.messages, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        st.error(f"Error saving message: {e}")
+
+def add_message(username, text):
+    """Add a new message to the chat"""
+    if text and text.strip():
+        new_message = {
+            "id": str(uuid.uuid4()),
+            "username": username,
+            "text": text.strip(),
+            "timestamp": datetime.now().isoformat(),
+            "avatar": username[0].upper() if username else "?"
+        }
+        st.session_state.messages.append(new_message)
+        save_messages()
+        return True
+    return False
+
+def clear_all_messages():
+    """Clear all messages"""
+    st.session_state.messages = []
+    save_messages()
+
+def format_time(timestamp_str):
+    """Format timestamp for display"""
+    try:
+        dt = datetime.fromisoformat(timestamp_str)
+        return dt.strftime("%I:%M %p")
+    except:
+        return "Just now"
+
+def get_online_count():
+    """Simulate online users (for visual flair)"""
+    import random
+    return random.randint(2, 8)
+
+# Initialize
+init_session_state()
+
+# Header Section
+col1, col2, col3 = st.columns([1, 2, 1])
+with col2:
+    st.markdown("""
+    <div class="header-container">
+        <h1 style="background: linear-gradient(to right, #c084fc, #a78bfa); 
+                   -webkit-background-clip: text; 
+                   -webkit-text-fill-color: transparent;
+                   font-size: 2.5rem;
+                   margin-bottom: 0.5rem;">
+            💬 ChatVerse
+        </h1>
+        <div class="online-badge">
+            <span class="online-dot"></span>
+            <span>{}</span>
+        </div>
+    </div>
+    """.format(f"{get_online_count()} online"), unsafe_allow_html=True)
+
+# Sidebar for settings
+with st.sidebar:
+    st.markdown("## 🎨 Chat Settings")
+    
+    # Username input
+    new_username = st.text_input(
+        "Your Display Name",
+        value=st.session_state.username,
+        max_chars=20,
+        help="Choose a name to show in chat"
+    )
+    if new_username != st.session_state.username and new_username:
+        st.session_state.username = new_username
+        st.rerun()
+    
+    st.markdown("---")
+    
+    # Chat actions
+    st.markdown("### 🛠️ Actions")
+    
+    if st.button("🗑️ Clear All Messages", use_container_width=True):
+        clear_all_messages()
+        st.success("Chat cleared!")
+        st.rerun()
+    
+    st.markdown("---")
+    
+    # Stats
+    st.markdown("### 📊 Stats")
+    st.metric("Total Messages", len(st.session_state.messages))
+    st.metric("Active Users", "~" + str(get_online_count()))
+    
+    st.markdown("---")
+    st.markdown("""
+    ### ℹ️ About
+    **ChatVerse** is a community forum where everyone can share ideas, ask questions, and connect.
+    
+    ✨ **Features:**
+    - Real-time chat experience
+    - Persistent messages
+    - Custom usernames
+    - Beautiful UI
+    
+    Be respectful and have fun! 🎉
+    """)
+
+# Main chat area
+st.markdown("### 💬 Community Chat")
+
+# Display messages
+chat_container = st.container()
+
+with chat_container:
+    if not st.session_state.messages:
+        st.info("💫 No messages yet. Start the conversation!")
+    else:
+        # Display all messages
+        for msg in reversed(st.session_state.messages):  # Show newest first
+            is_current_user = msg['username'] == st.session_state.username
+            avatar_class = "user-avatar" if is_current_user else "other-avatar"
             
-            if st.form_submit_button("🚀 Create Account", use_container_width=True):
-                if not all([name, email, username, p1, p2]):
-                    st.error("All fields required!")
-                elif len(username) < 3:
-                    st.error("Username must be at least 3 characters!")
-                elif len(p1) < 6:
-                    st.error("Password must be at least 6 characters!")
-                elif p1 != p2:
-                    st.error("Passwords don't match!")
-                else:
-                    conn = get_db()
-                    existing = conn.execute("SELECT * FROM users WHERE LOWER(username) = ?",
-                                          (username.lower(),)).fetchone()
-                    if existing:
-                        st.error("Username already exists!")
-                        conn.close()
-                    else:
-                        conn.execute(
-                            "INSERT INTO users (username, name, email, password, created_at) VALUES (?, ?, ?, ?, ?)",
-                            (username, name, email, hash_password(p1), datetime.now().isoformat())
-                        )
-                        conn.commit()
-                        conn.close()
-                        st.success("✅ Account created! Please login.")
-                        st.balloons()
-                        st.session_state.page = 'login'
-                        st.rerun()
-        
-        st.markdown('</div>', unsafe_allow_html=True)
-    
-    if st.button("← Back to Login"):
-        st.session_state.page = 'login'
+            # Create message HTML
+            message_html = f"""
+            <div class="chat-message {'user' if is_current_user else 'bot'}">
+                <div class="chat-avatar {avatar_class}">
+                    {msg['avatar']}
+                </div>
+                <div class="chat-content">
+                    <div class="chat-author">
+                        {msg['username']}
+                        <span class="chat-time">{format_time(msg['timestamp'])}</span>
+                    </div>
+                    <div class="chat-text">
+                        {msg['text']}
+                    </div>
+                </div>
+            </div>
+            """
+            st.markdown(message_html, unsafe_allow_html=True)
+
+# Message input area
+st.markdown("---")
+
+col1, col2 = st.columns([4, 1])
+
+with col1:
+    message_input = st.text_input(
+        "Message",
+        placeholder="Type your message here...",
+        key="message_input",
+        label_visibility="collapsed"
+    )
+
+with col2:
+    send_button = st.button("📤 Send", use_container_width=True)
+
+# Handle sending messages
+if send_button and message_input:
+    if add_message(st.session_state.username, message_input):
+        st.rerun()
+    else:
+        st.warning("Please enter a message")
+
+# Handle Enter key
+if message_input and message_input.endswith('\n'):
+    if add_message(st.session_state.username, message_input.strip()):
         st.rerun()
 
-def chat_page():
-    # Header
-    c1, c2, c3 = st.columns([3, 1, 1])
-    with c1:
-        st.markdown(f"## 💬 ChatVerse Forum")
-    with c2:
-        conn = get_db()
-        count = conn.execute("SELECT COUNT(*) as c FROM messages").fetchone()['c']
-        conn.close()
-        st.metric("Messages", count)
-    with c3:
-        if st.button("🚪 Logout", use_container_width=True):
-            st.session_state.logged_in = False
-            st.session_state.username = None
-            st.rerun()
-    
-    st.markdown("---")
-    
-    # Messages
-    conn = get_db()
-    msgs = conn.execute("SELECT * FROM messages ORDER BY timestamp DESC LIMIT 100").fetchall()
-    conn.close()
-    
-    st.markdown('<div class="chat-box">', unsafe_allow_html=True)
-    for m in reversed(msgs):
-        is_mine = m['username'] == st.session_state.username
-        st.markdown(f"""
-        <div class="msg {'my' if is_mine else ''}">
-            <span class="uname">{sanitize(m['username'])}</span>
-            <span class="time">{m['timestamp'][:16]}</span>
-            <div class="txt">{sanitize(m['text'])}</div>
-        </div>
-        """, unsafe_allow_html=True)
-    if not msgs:
-        st.info("No messages yet. Start the conversation! 🌟")
-    st.markdown('</div>', unsafe_allow_html=True)
-    
-    # Input
-    st.markdown("---")
-    with st.form("send", clear_on_submit=True):
-        c1, c2 = st.columns([5, 1])
-        txt = c1.text_input("Message", placeholder="Type your message...", label_visibility="collapsed")
-        if c2.form_submit_button("📤 Send", use_container_width=True) and txt and txt.strip():
-            conn = get_db()
-            conn.execute(
-                "INSERT INTO messages (id, username, text, timestamp) VALUES (?, ?, ?, ?)",
-                (str(uuid.uuid4()), st.session_state.username, txt.strip()[:500], 
-                 datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-            )
-            conn.commit()
-            conn.close()
-            st.rerun()
+# Auto-refresh (optional - for "real-time" feel)
+# Uncomment the line below to enable auto-refresh every 3 seconds
+# st.rerun()  # Note: This might cause performance issues
 
-# ============ MAIN ============
-if st.session_state.logged_in:
-    chat_page()
-else:
-    if st.session_state.page == 'signup':
-        signup_page()
-    else:
-        login_page()
+# Footer
+st.markdown("""
+<div style="text-align: center; padding: 1rem; color: #64748b; font-size: 0.8rem;">
+    ✨ Be kind • Stay curious • Connect with others ✨
+</div>
+""", unsafe_allow_html=True)
