@@ -1,23 +1,21 @@
 import streamlit as st
-import pandas as pd
-from datetime import datetime
-import uuid
 import json
 import os
+from datetime import datetime
+import uuid
 
-# Page configuration
+# Page config MUST be the first Streamlit command
 st.set_page_config(
     page_title="ChatVerse • Community Forum",
     page_icon="💬",
-    layout="wide",
-    initial_sidebar_state="collapsed"
+    layout="wide"
 )
 
-# Custom CSS for better styling
+# Custom CSS
 st.markdown("""
 <style>
-    /* Main container styling */
-    .stApp {
+    /* Main container */
+    .main {
         background: linear-gradient(145deg, #0f172a 0%, #1e293b 100%);
     }
     
@@ -41,7 +39,7 @@ st.markdown("""
         margin-left: 20%;
     }
     
-    .chat-message.bot {
+    .chat-message.other {
         background: rgba(255, 255, 255, 0.08);
         border: 1px solid rgba(255, 255, 255, 0.1);
         margin-right: 20%;
@@ -62,12 +60,10 @@ st.markdown("""
     
     .user-avatar {
         background: linear-gradient(135deg, #3b82f6, #60a5fa);
-        box-shadow: 0 4px 10px rgba(59, 130, 246, 0.3);
     }
     
     .other-avatar {
         background: linear-gradient(135deg, #7c3aed, #a78bfa);
-        box-shadow: 0 4px 10px rgba(124, 58, 237, 0.3);
     }
     
     .chat-content {
@@ -90,44 +86,9 @@ st.markdown("""
     .chat-text {
         color: #f1f5f9;
         line-height: 1.5;
-        word-wrap: break-word;
     }
     
-    /* Sidebar styling */
-    .css-1d391kg {
-        background: rgba(15, 23, 42, 0.95);
-    }
-    
-    /* Input area styling */
-    .stTextInput > div > div > input {
-        background: rgba(255, 255, 255, 0.07);
-        border: 1px solid rgba(255, 255, 255, 0.2);
-        border-radius: 2rem;
-        color: white;
-        padding: 0.75rem 1.5rem;
-    }
-    
-    .stTextInput > div > div > input:focus {
-        border-color: #c084fc;
-        box-shadow: 0 0 10px rgba(192, 132, 252, 0.3);
-    }
-    
-    /* Button styling */
-    .stButton > button {
-        background: linear-gradient(135deg, #7c3aed, #a855f7);
-        border: none;
-        border-radius: 2rem;
-        color: white;
-        font-weight: 500;
-        transition: all 0.2s ease;
-    }
-    
-    .stButton > button:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 8px 18px rgba(124, 58, 237, 0.4);
-    }
-    
-    /* Header styling */
+    /* Header */
     .header-container {
         text-align: center;
         padding: 1rem;
@@ -158,19 +119,12 @@ st.markdown("""
         50% { opacity: 0.5; }
     }
     
-    /* Alert/info styling */
-    .stAlert {
-        background: rgba(124, 58, 237, 0.1);
-        border: 1px solid rgba(124, 58, 237, 0.3);
-        border-radius: 1rem;
-    }
-    
     /* Responsive */
     @media (max-width: 768px) {
         .chat-message.user {
             margin-left: 5%;
         }
-        .chat-message.bot {
+        .chat-message.other {
             margin-right: 5%;
         }
     }
@@ -178,91 +132,51 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Initialize session state
-def init_session_state():
-    """Initialize all session state variables"""
-    if 'messages' not in st.session_state:
-        # Load messages from file or create default
-        st.session_state.messages = load_messages()
-    
-    if 'username' not in st.session_state:
-        st.session_state.username = "Guest_" + str(uuid.uuid4())[:6]
-    
-    if 'user_avatar_color' not in st.session_state:
-        st.session_state.user_avatar_color = "user-avatar"
+if 'messages' not in st.session_state:
+    st.session_state.messages = []
+if 'username' not in st.session_state:
+    st.session_state.username = "Guest_" + str(uuid.uuid4())[:6]
+
+# File for storing messages
+MESSAGES_FILE = "chat_messages.json"
 
 def load_messages():
-    """Load messages from JSON file"""
+    """Load messages from file"""
     try:
-        if os.path.exists("chat_messages.json"):
-            with open("chat_messages.json", "r", encoding="utf-8") as f:
-                messages = json.load(f)
-                return messages
-    except Exception as e:
-        print(f"Error loading messages: {e}")
-    
-    # Default messages
+        if os.path.exists(MESSAGES_FILE):
+            with open(MESSAGES_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+    except:
+        pass
+    # Default messages if file doesn't exist
     return [
         {
             "id": "1",
             "username": "Astra",
-            "text": "Welcome to ChatVerse! 🌟 This is a live community forum. Feel free to chat and connect!",
-            "timestamp": datetime.now().isoformat(),
-            "avatar": "A"
+            "text": "Welcome to ChatVerse! 🌟 This is a live community forum. Feel free to chat!",
+            "timestamp": datetime.now().isoformat()
         },
         {
             "id": "2",
             "username": "Nebula",
             "text": "Hey everyone! Love the vibe here. What's everyone up to? ✨",
-            "timestamp": datetime.now().isoformat(),
-            "avatar": "N"
+            "timestamp": datetime.now().isoformat()
         }
     ]
 
 def save_messages():
-    """Save messages to JSON file"""
+    """Save messages to file"""
     try:
-        with open("chat_messages.json", "w", encoding="utf-8") as f:
+        with open(MESSAGES_FILE, 'w', encoding='utf-8') as f:
             json.dump(st.session_state.messages, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        st.error(f"Error saving message: {e}")
-
-def add_message(username, text):
-    """Add a new message to the chat"""
-    if text and text.strip():
-        new_message = {
-            "id": str(uuid.uuid4()),
-            "username": username,
-            "text": text.strip(),
-            "timestamp": datetime.now().isoformat(),
-            "avatar": username[0].upper() if username else "?"
-        }
-        st.session_state.messages.append(new_message)
-        save_messages()
-        return True
-    return False
-
-def clear_all_messages():
-    """Clear all messages"""
-    st.session_state.messages = []
-    save_messages()
-
-def format_time(timestamp_str):
-    """Format timestamp for display"""
-    try:
-        dt = datetime.fromisoformat(timestamp_str)
-        return dt.strftime("%I:%M %p")
     except:
-        return "Just now"
+        pass
 
-def get_online_count():
-    """Simulate online users (for visual flair)"""
-    import random
-    return random.randint(2, 8)
+# Load messages on startup
+if len(st.session_state.messages) == 0:
+    st.session_state.messages = load_messages()
 
-# Initialize
-init_session_state()
-
-# Header Section
+# Header
 col1, col2, col3 = st.columns([1, 2, 1])
 with col2:
     st.markdown("""
@@ -276,33 +190,26 @@ with col2:
         </h1>
         <div class="online-badge">
             <span class="online-dot"></span>
-            <span>{}</span>
+            <span>Community Forum</span>
         </div>
     </div>
-    """.format(f"{get_online_count()} online"), unsafe_allow_html=True)
+    """, unsafe_allow_html=True)
 
-# Sidebar for settings
+# Sidebar
 with st.sidebar:
-    st.markdown("## 🎨 Chat Settings")
+    st.markdown("## 🎨 Settings")
     
     # Username input
-    new_username = st.text_input(
-        "Your Display Name",
-        value=st.session_state.username,
-        max_chars=20,
-        help="Choose a name to show in chat"
-    )
-    if new_username != st.session_state.username and new_username:
+    new_username = st.text_input("Your Display Name", value=st.session_state.username, max_chars=20)
+    if new_username:
         st.session_state.username = new_username
-        st.rerun()
     
     st.markdown("---")
     
-    # Chat actions
-    st.markdown("### 🛠️ Actions")
-    
+    # Clear chat button
     if st.button("🗑️ Clear All Messages", use_container_width=True):
-        clear_all_messages()
+        st.session_state.messages = []
+        save_messages()
         st.success("Chat cleared!")
         st.rerun()
     
@@ -311,87 +218,96 @@ with st.sidebar:
     # Stats
     st.markdown("### 📊 Stats")
     st.metric("Total Messages", len(st.session_state.messages))
-    st.metric("Active Users", "~" + str(get_online_count()))
     
     st.markdown("---")
     st.markdown("""
     ### ℹ️ About
-    **ChatVerse** is a community forum where everyone can share ideas, ask questions, and connect.
+    **ChatVerse** is a community forum where everyone can share ideas and connect.
     
     ✨ **Features:**
-    - Real-time chat experience
     - Persistent messages
     - Custom usernames
-    - Beautiful UI
-    
-    Be respectful and have fun! 🎉
+    - Beautiful design
     """)
 
 # Main chat area
-st.markdown("### 💬 Community Chat")
+st.markdown("## 💬 Community Chat")
+
+# Function to add message
+def add_message():
+    if st.session_state.message_input and st.session_state.message_input.strip():
+        new_msg = {
+            "id": str(uuid.uuid4()),
+            "username": st.session_state.username,
+            "text": st.session_state.message_input.strip(),
+            "timestamp": datetime.now().isoformat()
+        }
+        st.session_state.messages.append(new_msg)
+        save_messages()
+        st.session_state.message_input = ""  # Clear input
+        st.rerun()
 
 # Display messages
-chat_container = st.container()
-
-with chat_container:
-    if not st.session_state.messages:
-        st.info("💫 No messages yet. Start the conversation!")
-    else:
-        # Display all messages
-        for msg in reversed(st.session_state.messages):  # Show newest first
-            is_current_user = msg['username'] == st.session_state.username
-            avatar_class = "user-avatar" if is_current_user else "other-avatar"
-            
-            # Create message HTML
-            message_html = f"""
-            <div class="chat-message {'user' if is_current_user else 'bot'}">
-                <div class="chat-avatar {avatar_class}">
-                    {msg['avatar']}
+if not st.session_state.messages:
+    st.info("💫 No messages yet. Start the conversation!")
+else:
+    # Display messages in reverse order (newest first)
+    for msg in reversed(st.session_state.messages):
+        is_user = msg['username'] == st.session_state.username
+        avatar_letter = msg['username'][0].upper() if msg['username'] else "?"
+        
+        # Format time
+        try:
+            msg_time = datetime.fromisoformat(msg['timestamp'])
+            time_str = msg_time.strftime("%I:%M %p")
+        except:
+            time_str = "Just now"
+        
+        # Create message HTML
+        message_html = f"""
+        <div class="chat-message {'user' if is_user else 'other'}">
+            <div class="chat-avatar {'user-avatar' if is_user else 'other-avatar'}">
+                {avatar_letter}
+            </div>
+            <div class="chat-content">
+                <div class="chat-author">
+                    {msg['username']}
+                    <span class="chat-time">{time_str}</span>
                 </div>
-                <div class="chat-content">
-                    <div class="chat-author">
-                        {msg['username']}
-                        <span class="chat-time">{format_time(msg['timestamp'])}</span>
-                    </div>
-                    <div class="chat-text">
-                        {msg['text']}
-                    </div>
+                <div class="chat-text">
+                    {msg['text']}
                 </div>
             </div>
-            """
-            st.markdown(message_html, unsafe_allow_html=True)
+        </div>
+        """
+        st.markdown(message_html, unsafe_allow_html=True)
 
-# Message input area
+# Message input
 st.markdown("---")
 
-col1, col2 = st.columns([4, 1])
-
-with col1:
-    message_input = st.text_input(
-        "Message",
-        placeholder="Type your message here...",
-        key="message_input",
-        label_visibility="collapsed"
-    )
-
-with col2:
-    send_button = st.button("📤 Send", use_container_width=True)
-
-# Handle sending messages
-if send_button and message_input:
-    if add_message(st.session_state.username, message_input):
+# Use form for better handling
+with st.form(key="message_form", clear_on_submit=True):
+    col1, col2 = st.columns([5, 1])
+    with col1:
+        message = st.text_input(
+            "Message",
+            placeholder="Type your message here...",
+            key="message_input",
+            label_visibility="collapsed"
+        )
+    with col2:
+        submitted = st.form_submit_button("📤 Send", use_container_width=True)
+    
+    if submitted and message and message.strip():
+        new_msg = {
+            "id": str(uuid.uuid4()),
+            "username": st.session_state.username,
+            "text": message.strip(),
+            "timestamp": datetime.now().isoformat()
+        }
+        st.session_state.messages.append(new_msg)
+        save_messages()
         st.rerun()
-    else:
-        st.warning("Please enter a message")
-
-# Handle Enter key
-if message_input and message_input.endswith('\n'):
-    if add_message(st.session_state.username, message_input.strip()):
-        st.rerun()
-
-# Auto-refresh (optional - for "real-time" feel)
-# Uncomment the line below to enable auto-refresh every 3 seconds
-# st.rerun()  # Note: This might cause performance issues
 
 # Footer
 st.markdown("""
