@@ -1,3 +1,1 @@
 streamlit
-bcrypt==4.0.1
-PyYAML==6.0
