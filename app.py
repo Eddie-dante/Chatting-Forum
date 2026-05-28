@@ -5,75 +5,85 @@ from yaml.loader import SafeLoader
 import json
 import os
 import time
-import re
-import hashlib
 from datetime import datetime
-import threading
-from functools import lru_cache
 
 # ============ CONFIGURATION ============
 st.set_page_config(
-    page_title="ChatVerse - Secure Forum",
+    page_title="ChatVerse Forum",
     page_icon="💬",
-    layout="wide",
-    initial_sidebar_state="collapsed"
+    layout="wide"
 )
 
 # File paths
 CREDENTIALS_FILE = "users.yaml"
 MESSAGES_FILE = "messages.json"
 
-# ============ SECURITY ============
-def sanitize_input(text):
-    """Sanitize user input to prevent XSS"""
-    if not text:
-        return ""
-    # Remove HTML tags
-    text = re.sub(r'<[^>]*>', '', text)
-    # Remove script tags
-    text = re.sub(r'<script.*?</script>', '', text, flags=re.DOTALL | re.IGNORECASE)
-    # Escape HTML entities
-    text = (text.replace('&', '&amp;')
-                .replace('<', '&lt;')
-                .replace('>', '&gt;')
-                .replace('"', '&quot;')
-                .replace("'", '&#x27;'))
-    return text.strip()[:500]
-
-# ============ DATABASE ============
-def initialize_files():
-    """Initialize necessary files"""
-    # Create credentials file if not exists
+# ============ INITIALIZE FILES ============
+def init_files():
+    # Create users.yaml if not exists
     if not os.path.exists(CREDENTIALS_FILE):
-        default_config = {
+        hashed_passwords = stauth.Hasher(['admin123']).generate()
+        
+        config = {
             'credentials': {
                 'usernames': {
                     'admin': {
                         'email': 'admin@chatverse.com',
-                        'name': 'Admin User',
-                        'password': stauth.Hasher(['admin123']).generate()[0]
+                        'name': 'Admin',
+                        'password': hashed_passwords[0]
                     }
                 }
             },
             'cookie': {
                 'expiry_days': 30,
-                'key': 'chatverse_random_key_2024',
+                'key': 'random_signature_key_123',
                 'name': 'chatverse_cookie'
             },
             'preauthorized': {
                 'emails': []
             }
         }
+        
         with open(CREDENTIALS_FILE, 'w') as file:
-            yaml.dump(default_config, file, default_flow_style=False)
+            yaml.dump(config, file)
     
-    # Create messages file if not exists
+    # Create messages.json if not exists
     if not os.path.exists(MESSAGES_FILE):
         with open(MESSAGES_FILE, 'w') as f:
             json.dump([], f)
 
+# ============ LOAD CONFIG ============
+def load_config():
+    with open(CREDENTIALS_FILE) as file:
+        config = yaml.load(file, Loader=SafeLoader)
+    return config
+
+# ============ SAVE USER ============
+def register_user(username, name, email, password):
+    config = load_config()
+    
+    if username in config['credentials']['usernames']:
+        return False, "Username already exists"
+    
+    for user in config['credentials']['usernames'].values():
+        if user['email'] == email:
+            return False, "Email already exists"
+    
+    hashed_passwords = stauth.Hasher([password]).generate()
+    
+    config['credentials']['usernames'][username] = {
+        'email': email,
+        'name': name,
+        'password': hashed_passwords[0]
+    }
+    
+    with open(CREDENTIALS_FILE, 'w') as file:
+        yaml.dump(config, file)
+    
+    return True, "Registration successful"
+
+# ============ MESSAGE HANDLING ============
 def load_messages():
-    """Load messages from file"""
     try:
         with open(MESSAGES_FILE, 'r') as f:
             return json.load(f)
@@ -81,178 +91,127 @@ def load_messages():
         return []
 
 def save_message(username, text):
-    """Save a new message"""
     messages = load_messages()
     
     message = {
-        'id': len(messages) + 1,
         'username': username,
-        'text': sanitize_input(text),
-        'timestamp': datetime.now().strftime("%H:%M:%S"),
+        'text': text[:500],
+        'time': datetime.now().strftime("%H:%M"),
         'date': datetime.now().strftime("%Y-%m-%d")
     }
     
     messages.append(message)
     
-    # Keep only last 500 messages
-    if len(messages) > 500:
-        messages = messages[-500:]
+    if len(messages) > 200:
+        messages = messages[-200:]
     
     with open(MESSAGES_FILE, 'w') as f:
-        json.dump(messages, f, indent=2)
+        json.dump(messages, f)
     
     return message
 
-def clear_all_messages():
-    """Clear all messages"""
+def clear_messages():
     with open(MESSAGES_FILE, 'w') as f:
         json.dump([], f)
 
-# ============ AUTHENTICATION ============
-def load_auth_config():
-    """Load authentication configuration"""
-    with open(CREDENTIALS_FILE) as file:
-        config = yaml.load(file, Loader=SafeLoader)
-    return config
-
-def save_auth_config(config):
-    """Save authentication configuration"""
-    with open(CREDENTIALS_FILE, 'w') as file:
-        yaml.dump(config, file, default_flow_style=False)
-
-def register_user(username, name, email, password):
-    """Register a new user"""
-    config = load_auth_config()
-    
-    # Check if username exists
-    if username in config['credentials']['usernames']:
-        return False, "Username already exists!"
-    
-    # Check if email exists
-    for user in config['credentials']['usernames'].values():
-        if user.get('email') == email:
-            return False, "Email already registered!"
-    
-    # Add new user
-    config['credentials']['usernames'][username] = {
-        'email': email,
-        'name': name,
-        'password': stauth.Hasher([password]).generate()[0]
-    }
-    
-    save_auth_config(config)
-    return True, "Registration successful!"
-
-# ============ UI COMPONENTS ============
+# ============ CUSTOM CSS ============
 def load_css():
-    """Load custom CSS"""
     st.markdown("""
     <style>
-        .stApp {
-            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
-        }
-        
-        .chat-container {
-            background: rgba(30, 41, 59, 0.7);
-            border: 1px solid rgba(148, 163, 184, 0.1);
-            border-radius: 20px;
-            padding: 20px;
-            margin: 10px 0;
-            height: 500px;
-            overflow-y: auto;
-        }
-        
-        .message {
-            padding: 12px 16px;
-            margin: 8px 0;
-            border-radius: 12px;
-            background: rgba(51, 65, 85, 0.5);
-            animation: slideIn 0.3s ease-out;
-        }
-        
-        .own-message {
-            background: rgba(124, 58, 237, 0.2);
-            border-left: 3px solid #7c3aed;
-        }
-        
-        @keyframes slideIn {
-            from { transform: translateY(20px); opacity: 0; }
-            to { transform: translateY(0); opacity: 1; }
-        }
-        
-        .message-header {
-            font-size: 0.85em;
-            font-weight: 600;
-            color: #a78bfa;
-            margin-bottom: 5px;
-        }
-        
-        .message-time {
-            font-size: 0.75em;
-            color: #64748b;
-            margin-left: 10px;
-        }
-        
-        .message-text {
-            color: #e2e8f0;
-            line-height: 1.5;
-        }
-        
-        .stTextInput > div > div > input {
-            background: rgba(51, 65, 85, 0.5) !important;
-            border: 1px solid rgba(148, 163, 184, 0.2) !important;
-            border-radius: 12px !important;
-            color: white !important;
-        }
-        
-        .stTextInput > div > div > input:focus {
-            border-color: #7c3aed !important;
-            box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.2) !important;
-        }
-        
-        .stButton > button {
-            background: linear-gradient(135deg, #7c3aed, #6d28d9) !important;
-            color: white !important;
-            border: none !important;
-            border-radius: 12px !important;
-            padding: 10px 24px !important;
-            font-weight: 600 !important;
-            transition: all 0.3s ease !important;
-        }
-        
-        .stButton > button:hover {
-            transform: translateY(-2px) !important;
-            box-shadow: 0 4px 12px rgba(124, 58, 237, 0.3) !important;
-        }
-        
-        .auth-card {
-            background: rgba(30, 41, 59, 0.8);
-            border: 1px solid rgba(148, 163, 184, 0.1);
-            border-radius: 20px;
-            padding: 30px;
-            backdrop-filter: blur(10px);
-        }
-        
-        .header-title {
-            color: #a78bfa;
-            text-align: center;
-            font-size: 2.5em;
-            margin-bottom: 30px;
-        }
+    .stApp {
+        background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+    }
+    
+    .main-header {
+        color: #a78bfa;
+        text-align: center;
+        font-size: 3em;
+        font-weight: bold;
+        margin-bottom: 20px;
+    }
+    
+    .chat-box {
+        background: rgba(30, 41, 59, 0.8);
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        border-radius: 15px;
+        padding: 20px;
+        height: 500px;
+        overflow-y: auto;
+        margin: 10px 0;
+    }
+    
+    .message-bubble {
+        background: rgba(51, 65, 85, 0.6);
+        border-radius: 12px;
+        padding: 12px 16px;
+        margin: 8px 0;
+    }
+    
+    .my-message {
+        background: rgba(124, 58, 237, 0.3);
+        border-left: 3px solid #7c3aed;
+    }
+    
+    .msg-user {
+        color: #a78bfa;
+        font-weight: bold;
+        font-size: 0.9em;
+    }
+    
+    .msg-time {
+        color: #64748b;
+        font-size: 0.8em;
+        margin-left: 10px;
+    }
+    
+    .msg-text {
+        color: #e2e8f0;
+        margin-top: 5px;
+    }
+    
+    div[data-testid="stTextInput"] input {
+        background: rgba(51, 65, 85, 0.6) !important;
+        border: 1px solid rgba(148, 163, 184, 0.3) !important;
+        border-radius: 10px !important;
+        color: white !important;
+        padding: 12px !important;
+    }
+    
+    div[data-testid="stButton"] button {
+        background: linear-gradient(135deg, #7c3aed, #6d28d9) !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 10px !important;
+        padding: 10px 25px !important;
+        font-weight: bold !important;
+    }
+    
+    div[data-testid="stButton"] button:hover {
+        background: linear-gradient(135deg, #8b5cf6, #7c3aed) !important;
+        transform: translateY(-2px) !important;
+    }
+    
+    .auth-container {
+        background: rgba(30, 41, 59, 0.9);
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        border-radius: 20px;
+        padding: 30px;
+        max-width: 400px;
+        margin: 0 auto;
+    }
     </style>
     """, unsafe_allow_html=True)
 
-# ============ PAGES ============
+# ============ LOGIN PAGE ============
 def login_page():
-    """Login page"""
-    st.markdown('<h1 class="header-title">🔐 ChatVerse Login</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">💬 ChatVerse</h1>', unsafe_allow_html=True)
     
     col1, col2, col3 = st.columns([1, 2, 1])
     
     with col2:
-        st.markdown('<div class="auth-card">', unsafe_allow_html=True)
+        st.markdown('<div class="auth-container">', unsafe_allow_html=True)
         
-        config = load_auth_config()
+        config = load_config()
         authenticator = stauth.Authenticate(
             config['credentials'],
             config['cookie']['name'],
@@ -265,173 +224,143 @@ def login_page():
         
         if authentication_status == False:
             st.error('❌ Username/password is incorrect')
-        elif authentication_status == None:
-            st.warning('👋 Please enter your username and password')
         
         st.markdown('</div>', unsafe_allow_html=True)
         
         return authentication_status, username, name
 
+# ============ SIGNUP PAGE ============
 def signup_page():
-    """Signup page"""
-    st.markdown('<h1 class="header-title">✨ Create Account</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">✨ Create Account</h1>', unsafe_allow_html=True)
     
     col1, col2, col3 = st.columns([1, 2, 1])
     
     with col2:
-        st.markdown('<div class="auth-card">', unsafe_allow_html=True)
+        st.markdown('<div class="auth-container">', unsafe_allow_html=True)
         
-        with st.form("signup_form", clear_on_submit=True):
-            name = st.text_input("👤 Full Name", max_chars=50)
-            email = st.text_input("📧 Email", max_chars=100)
-            username = st.text_input("👤 Username", max_chars=20)
-            password = st.text_input("🔒 Password", type="password")
-            confirm_password = st.text_input("🔒 Confirm Password", type="password")
+        with st.form("signup_form"):
+            name = st.text_input("Full Name")
+            email = st.text_input("Email")
+            username = st.text_input("Username")
+            password = st.text_input("Password", type="password")
+            confirm_password = st.text_input("Confirm Password", type="password")
             
-            submitted = st.form_submit_button("🚀 Create Account", use_container_width=True)
+            submit = st.form_submit_button("Create Account", use_container_width=True)
             
-            if submitted:
-                if not all([name, email, username, password, confirm_password]):
-                    st.error("❌ All fields are required!")
-                elif len(username) < 3:
-                    st.error("❌ Username must be at least 3 characters!")
+            if submit:
+                if not all([name, email, username, password]):
+                    st.error("All fields are required")
                 elif len(password) < 6:
-                    st.error("❌ Password must be at least 6 characters!")
+                    st.error("Password must be at least 6 characters")
                 elif password != confirm_password:
-                    st.error("❌ Passwords don't match!")
-                elif not re.match(r'^[a-zA-Z0-9_]+$', username):
-                    st.error("❌ Username can only contain letters, numbers, and underscores!")
+                    st.error("Passwords don't match")
                 else:
                     success, message = register_user(username, name, email, password)
                     if success:
-                        st.success(f"✅ {message}")
+                        st.success(message)
                         st.balloons()
                         time.sleep(1)
                         st.session_state.show_signup = False
                         st.rerun()
                     else:
-                        st.error(f"❌ {message}")
+                        st.error(message)
         
         st.markdown('</div>', unsafe_allow_html=True)
     
-    if st.button("← Back to Login", use_container_width=True):
+    if st.button("← Back to Login"):
         st.session_state.show_signup = False
         st.rerun()
 
+# ============ CHAT PAGE ============
 def chat_page(username, name):
-    """Main chat page"""
-    # Header
-    col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
+    st.markdown(f'<h1 class="main-header">💬 ChatVerse Forum</h1>', unsafe_allow_html=True)
     
+    # Top bar
+    col1, col2, col3 = st.columns([3, 1, 1])
     with col1:
-        st.markdown(f'## 💬 ChatVerse Forum')
+        st.markdown(f"### Welcome, **{name}**! 👋")
     with col2:
-        st.markdown(f'👤 **{name}**')
-    with col3:
         messages = load_messages()
-        st.metric("💬 Messages", len(messages))
-    with col4:
-        if st.button("🚪 Logout", use_container_width=True):
+        st.metric("Messages", len(messages))
+    with col3:
+        if st.button("🚪 Logout"):
             for key in list(st.session_state.keys()):
                 del st.session_state[key]
             st.rerun()
     
-    st.markdown("---")
-    
     # Chat messages
+    st.markdown("---")
     messages = load_messages()
     
-    st.markdown('<div class="chat-container">', unsafe_allow_html=True)
+    st.markdown('<div class="chat-box">', unsafe_allow_html=True)
     
     if messages:
-        for msg in reversed(messages[-100:]):  # Show last 100 messages
-            is_own = msg.get('username') == username
-            msg_class = "own-message" if is_own else ""
+        for msg in messages[-100:]:
+            is_mine = msg['username'] == username
+            msg_class = "my-message" if is_mine else ""
             
             st.markdown(f"""
-            <div class="message {msg_class}">
-                <div class="message-header">
-                    {msg['username']}
-                    <span class="message-time">{msg['timestamp']}</span>
-                </div>
-                <div class="message-text">{msg['text']}</div>
+            <div class="message-bubble {msg_class}">
+                <span class="msg-user">{msg['username']}</span>
+                <span class="msg-time">{msg['time']}</span>
+                <div class="msg-text">{msg['text']}</div>
             </div>
             """, unsafe_allow_html=True)
     else:
-        st.info("🌌 No messages yet. Start the conversation!")
+        st.info("No messages yet. Start the conversation! 🌟")
     
     st.markdown('</div>', unsafe_allow_html=True)
     
     # Message input
     st.markdown("---")
     
-    with st.form(key="message_form", clear_on_submit=True):
+    with st.form("message_form", clear_on_submit=True):
         col1, col2 = st.columns([5, 1])
-        
         with col1:
-            message = st.text_input(
-                "Message",
-                placeholder="Type your message here...",
-                label_visibility="collapsed",
-                max_chars=500,
-                key="msg_input"
-            )
-        
+            msg = st.text_input("Message", placeholder="Type your message...", 
+                               label_visibility="collapsed")
         with col2:
-            submitted = st.form_submit_button("📤 Send", use_container_width=True)
+            send = st.form_submit_button("📤 Send", use_container_width=True)
         
-        if submitted and message and message.strip():
-            save_message(username, message)
+        if send and msg:
+            save_message(username, msg)
             st.rerun()
     
     # Sidebar
     with st.sidebar:
-        st.markdown("## ⚙️ Settings")
-        
-        if st.button("🔄 Refresh Chat", use_container_width=True):
+        st.markdown("## ⚙️ Options")
+        if st.button("🔄 Refresh"):
             st.rerun()
-        
-        if st.button("🧹 Clear Chat", use_container_width=True):
-            clear_all_messages()
-            st.success("✅ Chat cleared!")
+        if st.button("🧹 Clear Chat"):
+            clear_messages()
+            st.success("Chat cleared!")
             time.sleep(0.5)
             st.rerun()
 
-# ============ MAIN APP ============
+# ============ MAIN ============
 def main():
-    """Main application"""
-    # Initialize files
-    initialize_files()
-    
-    # Load CSS
+    init_files()
     load_css()
     
-    # Initialize session state
     if 'show_signup' not in st.session_state:
         st.session_state.show_signup = False
     if 'authentication_status' not in st.session_state:
         st.session_state.authentication_status = None
     
-    # Sidebar navigation
-    with st.sidebar:
-        st.markdown("## 🌟 ChatVerse")
-        st.markdown("---")
-        
-        if not st.session_state.authentication_status:
-            if st.button(
-                "📝 Create Account" if not st.session_state.show_signup else "🔑 Login",
-                use_container_width=True
-            ):
-                st.session_state.show_signup = not st.session_state.show_signup
-                st.rerun()
-    
-    # Route to appropriate page
     if st.session_state.authentication_status:
         chat_page(st.session_state.username, st.session_state.name)
     else:
         if st.session_state.show_signup:
             signup_page()
         else:
+            # Sidebar for switching between login/signup
+            with st.sidebar:
+                st.markdown("## 🌟 ChatVerse")
+                st.markdown("---")
+                if st.button("Create Account" if not st.session_state.show_signup else "Login"):
+                    st.session_state.show_signup = not st.session_state.show_signup
+                    st.rerun()
+            
             auth_status, username, name = login_page()
             if auth_status:
                 st.session_state.authentication_status = True
